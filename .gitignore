@@ -1,0 +1,6 @@
+__pycache__/
+.vscode/
+IMCs/
+Test/
+TSP_Instances/
+Test.py
