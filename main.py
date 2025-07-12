@@ -35,8 +35,8 @@ def run_netlists(n, dir):
     netlist_runner.analyze_all_netlists()
 
 def main():
-    nodes_low = 14
-    nodes_high = 14
+    nodes_low = 7
+    nodes_high = 16
     mean = 15
     var = 1
 
@@ -48,17 +48,20 @@ def main():
         num_instances = 1
 
         # root directory where tsp instances are contained
-        dir = os.path.join(os.getcwd(), "IMCs", "Metric", f"{n}Node")
+        dir = os.path.join(os.getcwd(), "IMCs", "Non-Metric2", f"{n}Node")
 
         ''' Generate TSP instances'''
-        gen_instances(n, num_instances, dir, mean, var, metric=False, metric_broken=True)
+        #gen_instances(n, num_instances, dir, mean, var, metric=False, metric_broken=True)
 
         ''' Generate netlists '''
         instance_paths = glob(os.path.join(dir, f"{n}Node*", f"generated_{n}_node.csv"))
-        gen_netlists(instance_paths)
+        #gen_netlists(instance_paths)
 
         ''' Run netlists '''
-        run_netlists(n, dir)
+        #run_netlists(n, dir)
+
+        netlist_runner = Run_Netlists(n, dir)
+        netlist_runner.plot_tour_length_histogram(os.path.join(os.getcwd(), "IMCs", "Non-Metric2", f"{n}Node"))
 
 if __name__ == "__main__":
     main()

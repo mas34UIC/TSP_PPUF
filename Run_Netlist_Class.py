@@ -8,6 +8,9 @@ import csv
 import random
 import math
 import time as timer
+from collections import defaultdict
+import matplotlib.pyplot as plt
+from matplotlib.colors import to_rgba
 
 '''
 Class to run netlists and analyze the output
@@ -173,20 +176,30 @@ class Run_Netlists:
         tour = [v for k, v in sorted(tour_pairs)]
         return tour
         
-    def sample_tour_lengths(self, length, adj_matrix):
+    def sample_tour_lengths(self, adj_matrix, return_samples, length=0):
         count = 0
         samples = 0
         if self.n > 9:
-            samples = 100000
+            samples = int(1e5)
+        elif self.n > 9 and return_samples:
+            samples = int(1e4)
         else:
             samples = int(math.ceil(math.factorial(self.n-1)/2))
 
-        for _ in range(samples):
-            tour = random.sample(range(self.n), self.n)
-            len = self.compute_tour_length(tour, adj_matrix)
-            if len < length:
-                count += 1     
-        return round( 1 - (count/samples), 2)
+        if return_samples:
+            lengths = list()
+            for _ in range(samples):
+                tour = random.sample(range(self.n), self.n)
+                lengths.append(self.compute_tour_length(tour, adj_matrix))
+            return lengths
+
+        else:
+            for _ in range(samples):
+                tour = random.sample(range(self.n), self.n)
+                len = self.compute_tour_length(tour, adj_matrix)
+                if len < length:
+                    count += 1     
+            return round( 1 - (count/samples), 2)
 
     """
     Analyze the quality of each analog TSP solution and save normalized tour costs.
@@ -222,7 +235,7 @@ class Run_Netlists:
                 length = self.compute_tour_length(tour, distance_matrix)
                 avg_ratio = length / avg_len
                 min_ratio = length / min_len
-                len_percent = self.sample_tour_lengths(length, distance_matrix)
+                len_percent = self.sample_tour_lengths(distance_matrix, False, length)
                 avg_ratios.append(avg_ratio)
                 min_ratios.append(min_ratio)
                 len_percents.append(len_percent)
@@ -234,3 +247,131 @@ class Run_Netlists:
                 min_ratio = sum(min_ratios) / len(min_ratios)
                 len_ratio = sum(len_percents) / len(len_percents)
                 writer.writerow(["Average", "", "", "", f"{avg_ratio:.4f}", "", f"{min_ratio:.4f}", f"{len_ratio:.4f}"])
+
+
+    def read_results_csv(self, filename, results, quality):
+        with open(filename, newline='') as f:
+            reader = list(csv.reader(f))
+
+            if results == True:
+                return int(reader[1][0].split("Node")[0]), float(reader[-1][1])
+
+            elif quality == True:
+                return int(reader[1][0].split("Node")[0]), float(reader[-1][4]), float(reader[-1][6]), float(reader[-1][7])
+
+
+    def plot_quality_data(self, data, line, path, ylabel, title):
+        print(f"Generating {path} plot...")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        
+        x = np.array(list(data.keys()))
+        y = np.array(list(data.values()))
+
+        # Fit a line (1st-degree polynomial)
+        if line:
+            slope, intercept = np.polyfit(x, y, 1)
+            best_fit = slope * x + intercept
+            plt.plot(x, best_fit, color='red')
+
+        plt.scatter(x, y)
+        plt.xlabel("Nodes")
+        plt.ylabel(ylabel)
+        plt.title(title)
+        plt.grid(True)
+        plt.savefig(path, dpi=300, bbox_inches='tight')
+        plt.clf()
+
+    '''
+    plot solution quality for all instances in root_dir
+    or, plot solution quality for only nNode instances in root_dir
+    '''
+    def plot_soltuion_quality(self, root_dir, all=True):
+        if all:
+            quality_paths = glob(os.path.join(root_dir, f"[0-9]*Node", "results", "quality_summary.csv"))
+        else:
+            quality_paths = glob(os.path.join(root_dir, "results", "quality_summary.csv"))
+        time_paths = glob(os.path.join(root_dir, f"[0-9]*Node", "results", "results.csv"))
+
+        avg = dict()
+        p_times_min = dict()
+        length = dict()
+        time = dict()
+
+        for path in quality_paths:
+            result = self.read_results_csv(path, False, True)
+            avg[result[0]] = result[1]
+            p_times_min[result[0]] = result[2]
+            length[result[0]] = result[3]
+
+        for path in time_paths:
+            result = self.read_results_csv(path, True, False)
+            time[result[0]] = result[1]
+
+        self.plot_quality_data(avg, False, os.path.join(root_dir, "Plots", "AverageLength.png"), "Route Length of Solution / Avg Route Length", "(Route Length of Solution / Avg Route Length) vs. Nodes")
+        self.plot_quality_data(p_times_min, False, os.path.join(root_dir, "Plots", "xTimesMinLength.png"), "Route Length of Solution / Min Route Length", "(Route Length of Solution / Min Route Length) vs. Nodes")
+        self.plot_quality_data(length, False, os.path.join(root_dir, "Plots", "SolutionQuality.png"), f"% of Tours Longer Than Solution", f"% of Tours Longer Than Solution vs. Nodes")
+        self.plot_quality_data(time, True, os.path.join(root_dir, "Plots", "Time.png"), "Solution search time [μs]", "Solution search time vs. Nodes")
+
+
+    '''
+    Plot a histogram of the tour lengths and approximate solution lengths
+    for TSP instances in root_dir
+    '''
+    def plot_tour_length_histogram(self, root_dir):
+        csv_paths = glob(os.path.join(root_dir, f"{self.n}Node*", f"generated_{self.n}_node.csv"))
+        quality_csv_path = os.path.join(root_dir, "results", "quality_summary.csv")
+        lengths = list()
+        approx_lengths = list()
+
+        with open(quality_csv_path, newline="") as f_in:
+            reader = csv.DictReader(f_in)
+            for row in reader:
+                instance = row["Instance"]
+                if instance == "Average":
+                    continue
+                approx_lengths.append(float(row["Tour_Length"]))
+
+        for path in csv_paths:
+            adj_matrix, avg_len, min_len = self.read_distance_matrix_from_csv(path)    
+            lengths.extend(self.sample_tour_lengths(adj_matrix, True))
+
+        min_approx_len = min(approx_lengths)
+        max_approx_len = max(approx_lengths)
+        avg_approx_len = sum(approx_lengths) / len(approx_lengths)
+
+        count = 0
+        for i in lengths:
+            if i < avg_approx_len:
+                count += 1
+        pct_above_avg = 100*(1-(count/len(lengths)))
+
+        count = 0
+        for i in lengths:
+            if i < max_approx_len:
+                count += 1
+        pct_above_max = 100*(1-(count/len(lengths)))
+
+        bin_edges = np.histogram_bin_edges(lengths, "fd")
+        plt.figure(figsize=(10, 5))
+        counts, bins, patches = plt.hist(lengths, bins=bin_edges, color="blue", alpha=0.5)
+        for bin_start, bin_end, patch in zip(bins[:-1], bins[1:], patches):
+            if (bin_start > avg_approx_len) and (bin_start < max_approx_len):
+                patch.set_facecolor('blue')
+                patch.set_alpha(0.7)
+            elif bin_start > max_approx_len:
+                patch.set_facecolor('blue')
+                patch.set_alpha(0.9)
+        plt.text(plt.xlim()[1]*0.79, plt.ylim()[1]*0.7, f"{pct_above_avg:.1f}% Tours > Mean approx", color=to_rgba('blue', alpha=0.7), fontsize=10)
+        plt.text(plt.xlim()[1]*0.79, plt.ylim()[1]*0.65, f"{pct_above_max:.1f}% Tours > Max approx", color=to_rgba('blue', alpha=0.9), fontsize=10)
+        plt.axvline(min_approx_len, color='green', linestyle='--', linewidth=2, label=f'Min approx: {min_approx_len:.2f}')
+        plt.axvline(avg_approx_len, color='purple', linestyle='-', linewidth=2, label=f'Mean approx: {avg_approx_len:.2f}')
+        plt.axvline(max_approx_len, color='red', linestyle='--', linewidth=2, label=f'Max approx: {max_approx_len:.2f}')
+        plt.title(f"{os.path.basename(root_dir)} TSP Instance Tour lengths")
+        plt.xlabel("Tour Length")
+        plt.ylabel("Frequency")
+        plt.legend()
+        plt.tight_layout()
+        png_path = os.path.join(root_dir, "Plots", "TourLengthHistogram.png")
+        os.makedirs(os.path.dirname(png_path), exist_ok=True)
+        plt.savefig(png_path, dpi=300, bbox_inches='tight')
+        plt.clf()
